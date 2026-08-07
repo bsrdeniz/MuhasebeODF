@@ -364,15 +364,16 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
         const pdf = await loadingTask.promise;
 
         let allPageRows: Record<string, any>[] = [];
+        let isTobbBordro = false;
+        const pageDataList: any[] = [];
 
-        // Loop over all pages in the PDF
+        // Scan all pages in the PDF
         const pagesToScan = pdf.numPages;
         
         for (let pageNum = 1; pageNum <= pagesToScan; pageNum++) {
           const page = await pdf.getPage(pageNum);
           const textContent = await page.getTextContent();
           
-          // 1. Map items to coordinates (X, Y) and width, trim empty text
           const items: PdfTextItem[] = textContent.items
             .map((it: any) => ({
               text: it.str.trim(),
@@ -384,8 +385,7 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
 
           if (items.length === 0) continue;
 
-          // 2. Group items into rows using vertical (Y) coordinate threshold (±6 pixels)
-          // Sort items by Y descending (top of page to bottom)
+          // Group items into rows using vertical (Y) coordinate threshold (±6 pixels)
           const sortedItems = [...items].sort((a, b) => b.y - a.y);
           const groupedRows: PdfTextItem[][] = [];
           
@@ -412,21 +412,17 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
           });
           rowsWithAvgY.sort((a, b) => b.y - a.y);
 
-          // 3. Horizontal word-merge: Merge text chunks that are extremely close horizontally (gap < 4px).
-          // PDF.js often splits words like "TC Kimlik" and "No" or name "ONUR ZEKERİYA" into separate objects.
+          // Horizontal word-merge: Merge close horizontal chunks (gap < 4px)
           const mergedRows = rowsWithAvgY.map(rowObj => {
             const rawItems = rowObj.items;
-            if (rawItems.length <= 1) return rawItems;
+            if (rawItems.length <= 1) return { items: rawItems, y: rowObj.y };
 
             const merged: PdfTextItem[] = [rawItems[0]];
             for (let i = 1; i < rawItems.length; i++) {
               const current = rawItems[i];
               const previous = merged[merged.length - 1];
-
-              // Calculate exact gap between the end of previous item and start of current item
               const gap = current.x - (previous.x + previous.width);
               
-              // If gap is very small (less than 4 pixels), merge them
               if (gap >= -2 && gap < 4) {
                 previous.text += (previous.text.endsWith(' ') || current.text.startsWith(' ') ? '' : ' ') + current.text;
                 previous.width += current.width + gap;
@@ -434,87 +430,127 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                 merged.push(current);
               }
             }
-            return merged;
+            return { items: merged, y: rowObj.y };
           });
 
-          // 4. Split items that contain combined TC + Name or space-separated numbers
-          const postSplitRows = mergedRows.map(rowItems => {
-            const splitItems: PdfTextItem[] = [];
-            rowItems.forEach(item => {
-              // 4.1. Split TC Kimlik No and Name if combined (e.g. "13463375226 TÜRKAN")
-              const tcMatch = item.text.match(/^(\d{11})\s*(.*)$/);
-              if (tcMatch) {
-                const tcStr = tcMatch[1];
-                const nameStr = tcMatch[2];
-                const tcWidth = item.width * (tcStr.length / item.text.length);
-                const nameWidth = item.width - tcWidth;
-                
-                splitItems.push({
-                  text: tcStr,
-                  x: item.x,
-                  y: item.y,
-                  width: tcWidth
-                });
-                splitItems.push({
-                  text: nameStr,
-                  x: item.x + tcWidth + 4,
-                  y: item.y,
-                  width: nameWidth
-                });
-                return;
-              }
-
-              // 4.2. Split multiple space-separated numbers (e.g. "87,062.85 12,188.80 20,024.46 2,254.93")
-              if (item.text.includes(' ') && /\d+[\.,]\d+/.test(item.text)) {
-                const parts = item.text.split(/\s+/).map(p => p.trim()).filter(p => p !== '');
-                if (parts.length > 1) {
-                  const partWidth = item.width / parts.length;
-                  parts.forEach((part, idx) => {
-                    splitItems.push({
-                      text: part,
-                      x: item.x + idx * partWidth,
-                      y: item.y,
-                      width: partWidth
-                    });
-                  });
-                  return;
-                }
-              }
-
-              splitItems.push(item);
-            });
-            // Re-sort split items by X coordinate
-            return splitItems.sort((a, b) => a.x - b.x);
-          });
-
-          // 5. Identify the header row
-          // A header row is the row containing keywords: "tc", "kimlik", "ad", "soyad", "sicil", "prim", "t.k"
+          // Identify if it's a TOBB structured bordro
           const headerKeywords = ['tc', 'kimlik', 'ad', 'soyad', 'sicil', 'statü', 'statu', 'p.e.k', 't.p.', 't.k.', 'ç.g.s'];
           let headerRowIndex = -1;
           
-          for (let i = 0; i < postSplitRows.length; i++) {
-            const row = postSplitRows[i];
+          for (let i = 0; i < mergedRows.length; i++) {
+            const row = mergedRows[i].items;
             const matchCount = row.filter(item => 
               headerKeywords.some(k => item.text.toLowerCase().includes(k))
             ).length;
             
             if (matchCount >= 3) {
               headerRowIndex = i;
+              isTobbBordro = true;
               break;
             }
           }
 
-          if (headerRowIndex === -1) continue; // no headers found on this page
+          pageDataList.push({
+            mergedRows,
+            headerRowIndex
+          });
+        }
 
-          // 6. Align data rows (only rows below the header row in Y)
-          const headerY = rowsWithAvgY[headerRowIndex].y;
-          const dataRows = postSplitRows.filter((_, idx) => rowsWithAvgY[idx].y < headerY);
+        // Dual-Mode Processing:
+        if (!isTobbBordro) {
+          // MODE B: General layout document - Convert text coordinates directly to generic columns
+          pageDataList.forEach((pageData) => {
+            pageData.mergedRows.forEach((rowObj: any) => {
+              const rowMap: Record<string, any> = {};
+              let hasText = false;
+              
+              rowObj.items.forEach((item: any, colIdx: number) => {
+                const text = item.text.trim();
+                if (text !== '') {
+                  // Format check: Convert formatted numbers like '11.793,00' or decimals to standard floats
+                  const cleanText = text.replace(/\./g, '').replace(/,/g, '.');
+                  const num = parseFloat(cleanText);
+                  
+                  if (!isNaN(num) && /^[\d\.,]+$/.test(text) && !text.includes('/') && !text.includes('-')) {
+                    if (text.length >= 9 && /^\d+$/.test(text)) {
+                      rowMap[`Sütun ${colIdx + 1}`] = text; // Keep TC/IDs as plain string
+                    } else {
+                      rowMap[`Sütun ${colIdx + 1}`] = num;
+                    }
+                  } else {
+                    rowMap[`Sütun ${colIdx + 1}`] = text;
+                  }
+                  hasText = true;
+                }
+              });
+              
+              if (hasText) {
+                allPageRows.push(rowMap);
+              }
+            });
+          });
+        } else {
+          // MODE A: Structured TOBB Payroll document
+          pageDataList.forEach((pageData) => {
+            const { mergedRows, headerRowIndex } = pageData;
+            if (headerRowIndex === -1) return;
 
-          dataRows.forEach(row => {
-            const rowMap = parseTobbBordroRow(row);
-            if (rowMap) {
-              allPageRows.push(rowMap);
-            }
+            const headerY = mergedRows[headerRowIndex].y;
+            
+            const postSplitRows = mergedRows.map((rowObj: any) => {
+              const splitItems: PdfTextItem[] = [];
+              rowObj.items.forEach((item: any) => {
+                const tcMatch = item.text.match(/^(\d{11})\s*(.*)$/);
+                if (tcMatch) {
+                  const tcStr = tcMatch[1];
+                  const nameStr = tcMatch[2];
+                  const tcWidth = item.width * (tcStr.length / item.text.length);
+                  const nameWidth = item.width - tcWidth;
+                  
+                  splitItems.push({
+                    text: tcStr,
+                    x: item.x,
+                    y: item.y,
+                    width: tcWidth
+                  });
+                  splitItems.push({
+                    text: nameStr,
+                    x: item.x + tcWidth + 4,
+                    y: item.y,
+                    width: nameWidth
+                  });
+                  return;
+                }
+
+                if (item.text.includes(' ') && /\d+[\.,]\d+/.test(item.text)) {
+                  const parts = item.text.split(/\s+/).map((p: any) => p.trim()).filter((p: any) => p !== '');
+                  if (parts.length > 1) {
+                    const partWidth = item.width / parts.length;
+                    parts.forEach((part: any, idx: number) => {
+                      splitItems.push({
+                        text: part,
+                        x: item.x + idx * partWidth,
+                        y: item.y,
+                        width: partWidth
+                      });
+                    });
+                    return;
+                  }
+                }
+
+                splitItems.push(item);
+              });
+              return splitItems.sort((a, b) => a.x - b.x);
+            });
+
+            const dataRows = postSplitRows.filter((_: any, idx: number) => mergedRows[idx].y < headerY);
+
+            dataRows.forEach((row: any) => {
+              const rowMap = parseTobbBordroRow(row);
+              if (rowMap) {
+                allPageRows.push(rowMap);
+              }
+            });
           });
         }
 
