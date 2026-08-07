@@ -258,6 +258,7 @@ function parseTobbBordroRow(rowItems: PdfTextItem[]): Record<string, any> | null
   const tokens: string[] = [];
   sorted.forEach(item => {
     const text = item.text.trim();
+    if (!text) return;
     
     // Split TC + Name
     const tcMatch = text.match(/^(\d{11})\s*(.*)$/);
