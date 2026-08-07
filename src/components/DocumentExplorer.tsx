@@ -768,6 +768,68 @@ export const DocumentExplorer: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  // Merges and downloads ALL archived documents into a single combined Excel spreadsheet (.xls)
+  const handleDownloadAllArchiveExcel = async () => {
+    if (documents.length === 0) {
+      alert('Arşivde birleştirilecek evrak bulunmuyor.');
+      return;
+    }
+
+    try {
+      const allRowsMatrix: any[] = [];
+      let headers: string[] = [];
+
+      for (const doc of documents) {
+        const rows = await getDocumentRows(doc.id);
+        if (rows.length === 0) continue;
+
+        // Determine spreadsheet headers on first document hit
+        if (headers.length === 0) {
+          // Put metadata headers first so user can filter by source file
+          headers = ["Kaynak Evrak", "Belge Türü", "Tarih", ...Object.keys(rows[0].data)];
+        }
+
+        rows.forEach(row => {
+          const rowData = headers.map(h => {
+            if (h === "Kaynak Evrak") return doc.name;
+            if (h === "Belge Türü") return doc.docType;
+            if (h === "Tarih") return doc.date;
+            return row.data[h] === undefined || row.data[h] === null ? '' : row.data[h];
+          });
+          allRowsMatrix.push(rowData);
+        });
+      }
+
+      if (allRowsMatrix.length === 0) {
+        alert('Arşivdeki belgelerden çözümlenmiş tablo verisi bulunamadı.');
+        return;
+      }
+
+      // Prepend headers to rows matrix
+      allRowsMatrix.unshift(headers);
+
+      const worksheet = XLSX.utils.aoa_to_sheet(allRowsMatrix);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Tüm Arşiv Verileri');
+
+      // Export as universally compatible .xls format
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xls', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = `Tum_Arsiv_Bordro_Verileri.xls`;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Arşivi birleştirme hatası:', err);
+      alert('Arşiv verileri indirilirken hata oluştu.');
+    }
+  };
+
   // Pagination for Document list
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -899,6 +961,32 @@ export const DocumentExplorer: React.FC = () => {
                   <option value="date-asc">Tarih (Eskiye Doğru)</option>
                   <option value="name-asc">İsim (A-Z)</option>
                 </select>
+
+                {documents.length > 0 && (
+                  <button
+                    onClick={handleDownloadAllArchiveExcel}
+                    className="btn btn-success"
+                    style={{
+                      height: '38px',
+                      padding: '0 16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      backgroundColor: '#10b981',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      marginLeft: 'auto'
+                    }}
+                    title="Arşivdeki tüm evrakların verilerini birleştirip tek bir Excel dosyası (.xls) olarak indir"
+                  >
+                    <Download size={14} /> Tüm Arşivi Birleştir ve Excel İndir (.xls)
+                  </button>
+                )}
               </div>
             </div>
 
