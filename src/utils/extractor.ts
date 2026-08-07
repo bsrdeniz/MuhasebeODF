@@ -503,9 +503,8 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                 const tcMatch = item.text.match(/^(\d{11})\s*(.*)$/);
                 if (tcMatch) {
                   const tcStr = tcMatch[1];
-                  const nameStr = tcMatch[2];
+                  const nameStr = tcMatch[2].trim();
                   const tcWidth = item.width * (tcStr.length / item.text.length);
-                  const nameWidth = item.width - tcWidth;
                   
                   splitItems.push({
                     text: tcStr,
@@ -513,12 +512,16 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                     y: item.y,
                     width: tcWidth
                   });
-                  splitItems.push({
-                    text: nameStr,
-                    x: item.x + tcWidth + 4,
-                    y: item.y,
-                    width: nameWidth
-                  });
+
+                  if (nameStr) {
+                    const nameWidth = item.width - tcWidth;
+                    splitItems.push({
+                      text: nameStr,
+                      x: item.x + tcWidth + 4,
+                      y: item.y,
+                      width: nameWidth
+                    });
+                  }
                   return;
                 }
 
