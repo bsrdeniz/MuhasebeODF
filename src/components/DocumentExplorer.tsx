@@ -37,6 +37,42 @@ export const DocumentExplorer: React.FC = () => {
   // Loading
   const [isLoading, setIsLoading] = useState(true);
 
+  const formatCellValue = (val: any, headerKey: string) => {
+    if (val === undefined || val === null) return '-';
+    if (typeof val === 'number') {
+      const lowerKey = headerKey.toLowerCase();
+      if (
+        lowerKey.includes('tc') || 
+        lowerKey.includes('kimlik') || 
+        lowerKey.includes('sicil') || 
+        lowerKey.includes('no') || 
+        lowerKey.includes('tckn')
+      ) {
+        return val.toFixed(0);
+      }
+      return val.toLocaleString('tr-TR', { minimumFractionDigits: 2 });
+    }
+    return String(val);
+  };
+
+  const formatCopyValue = (val: any, headerKey: string) => {
+    if (val === undefined || val === null) return '';
+    if (typeof val === 'number') {
+      const lowerKey = headerKey.toLowerCase();
+      if (
+        lowerKey.includes('tc') || 
+        lowerKey.includes('kimlik') || 
+        lowerKey.includes('sicil') || 
+        lowerKey.includes('no') || 
+        lowerKey.includes('tckn')
+      ) {
+        return val.toFixed(0);
+      }
+      return val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false });
+    }
+    return String(val);
+  };
+
   const loadDocuments = async () => {
     setIsLoading(true);
     try {
@@ -217,13 +253,7 @@ export const DocumentExplorer: React.FC = () => {
         for (let c = minC; c <= maxC; c++) {
           const headerKey = spreadsheetHeaders[c];
           const val = row.data[headerKey];
-          if (val === undefined || val === null) {
-            lineCells.push('');
-          } else if (typeof val === 'number') {
-            lineCells.push(val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false }));
-          } else {
-            lineCells.push(String(val));
-          }
+          lineCells.push(formatCopyValue(val, headerKey));
         }
         copyLines.push(lineCells.join('\t'));
       }
@@ -262,10 +292,14 @@ export const DocumentExplorer: React.FC = () => {
         <td class="selectable-header-row" data-row="${rowIdx}" style="border: 1px solid #e2e8f0; padding: 8px; font-weight: bold; text-align: center; background-color: #f8fafc;">${row.rowNumber}</td>
         ${headers.map((h, colIdx) => {
           const val = row.data[h];
-          const isNum = typeof val === 'number';
-          const style = isNum ? 'text-align: right; font-weight: bold;' : 'text-align: left;';
-          const displayVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : (val === undefined || val === null ? '' : String(val));
-          const copyVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false }) : displayVal;
+          const displayVal = formatCellValue(val, h);
+          const copyVal = formatCopyValue(val, h);
+          
+          const lowerKey = h.toLowerCase();
+          const isNumericMeasure = typeof val === 'number' && 
+            !(lowerKey.includes('tc') || lowerKey.includes('kimlik') || lowerKey.includes('sicil') || lowerKey.includes('no') || lowerKey.includes('tckn'));
+            
+          const style = isNumericMeasure ? 'text-align: right; font-weight: bold;' : 'text-align: left;';
           return `<td class="selectable-cell" data-row="${rowIdx}" data-col="${colIdx}" data-raw="${copyVal}" style="border: 1px solid #e2e8f0; padding: 8px; ${style}">${displayVal}</td>`;
         }).join('')}
       </tr>
@@ -661,13 +695,7 @@ export const DocumentExplorer: React.FC = () => {
         for (let c = minC; c <= maxC; c++) {
           const headerKey = spreadsheetHeaders[c];
           const val = row.data[headerKey];
-          if (val === undefined || val === null) {
-            lineCells.push('');
-          } else if (typeof val === 'number') {
-            lineCells.push(val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false }));
-          } else {
-            lineCells.push(String(val));
-          }
+          lineCells.push(formatCopyValue(val, headerKey));
         }
         copyLines.push(lineCells.join('\t'));
       }
@@ -679,11 +707,7 @@ export const DocumentExplorer: React.FC = () => {
       const bodyLines = filteredDocRows.map(row => 
         headers.map(h => {
           const val = row.data[h];
-          if (val === undefined || val === null) return '';
-          if (typeof val === 'number') {
-            return val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false });
-          }
-          return String(val);
+          return formatCopyValue(val, h);
         }).join('\t')
       );
       tsvString = [headerLine, ...bodyLines].join('\r\n');
@@ -711,12 +735,8 @@ export const DocumentExplorer: React.FC = () => {
       ...filteredDocRows.map(row => 
         headers.map(h => {
           const val = row.data[h];
-          if (val === undefined || val === null) return '';
-          if (typeof val === 'number') {
-            return val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false });
-          }
-          const str = String(val);
-          return str.includes(';') ? `"${str}"` : str;
+          const valStr = formatCopyValue(val, h);
+          return valStr.includes(';') ? `"${valStr}"` : valStr;
         }).join(';')
       )
     ];
@@ -745,7 +765,7 @@ export const DocumentExplorer: React.FC = () => {
       ...filteredDocRows.map(row => 
         headers.map(h => {
           const val = row.data[h];
-          return val === undefined || val === null ? '' : val;
+          return formatCopyValue(val, h);
         })
       )
     ];
@@ -794,7 +814,8 @@ export const DocumentExplorer: React.FC = () => {
             if (h === "Kaynak Evrak") return doc.name;
             if (h === "Belge Türü") return doc.docType;
             if (h === "Tarih") return doc.date;
-            return row.data[h] === undefined || row.data[h] === null ? '' : row.data[h];
+            const val = row.data[h];
+            return formatCopyValue(val, h);
           });
           allRowsMatrix.push(rowData);
         });
@@ -887,10 +908,14 @@ export const DocumentExplorer: React.FC = () => {
           <td class="selectable-header-row" data-row="${rowIdx}" style="border: 1px solid #e2e8f0; padding: 8px; font-weight: bold; text-align: center; background-color: #f8fafc;">${row.rowNumber}</td>
           ${headers.map((h, colIdx) => {
             const val = row.data[h];
-            const isNum = typeof val === 'number';
-            const style = isNum ? 'text-align: right; font-weight: bold;' : 'text-align: left;';
-            const displayVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : (val === undefined || val === null ? '' : String(val));
-            const copyVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false }) : displayVal;
+            const displayVal = formatCellValue(val, h);
+            const copyVal = formatCopyValue(val, h);
+            
+            const lowerKey = h.toLowerCase();
+            const isNumericMeasure = typeof val === 'number' && 
+              !(lowerKey.includes('tc') || lowerKey.includes('kimlik') || lowerKey.includes('sicil') || lowerKey.includes('no') || lowerKey.includes('tckn'));
+              
+            const style = isNumericMeasure ? 'text-align: right; font-weight: bold;' : 'text-align: left;';
             return `<td class="selectable-cell" data-row="${rowIdx}" data-col="${colIdx}" data-raw="${copyVal}" style="border: 1px solid #e2e8f0; padding: 8px; ${style}">${displayVal}</td>`;
           }).join('')}
         </tr>
@@ -1879,14 +1904,13 @@ export const DocumentExplorer: React.FC = () => {
                                     onMouseEnter={() => handleCellMouseEnter(rowIdx, colIdx)}
                                     onMouseUp={handleCellMouseUp}
                                     style={{
-                                      fontWeight: typeof cellVal === 'number' ? 700 : 400,
-                                      textAlign: typeof cellVal === 'number' ? 'right' : 'left'
+                                      fontWeight: (typeof cellVal === 'number' && 
+                                        !(h.toLowerCase().includes('tc') || h.toLowerCase().includes('kimlik') || h.toLowerCase().includes('sicil') || h.toLowerCase().includes('no') || h.toLowerCase().includes('tckn'))) ? 700 : 400,
+                                      textAlign: (typeof cellVal === 'number' && 
+                                        !(h.toLowerCase().includes('tc') || h.toLowerCase().includes('kimlik') || h.toLowerCase().includes('sicil') || h.toLowerCase().includes('no') || h.toLowerCase().includes('tckn'))) ? 'right' : 'left'
                                     }}
                                   >
-                                    {typeof cellVal === 'number' 
-                                      ? cellVal.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) 
-                                      : String(cellVal === undefined || cellVal === null ? '-' : cellVal)
-                                    }
+                                    {formatCellValue(cellVal, h)}
                                   </td>
                                 );
                               })}
