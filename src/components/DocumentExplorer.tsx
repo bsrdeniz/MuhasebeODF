@@ -830,6 +830,391 @@ export const DocumentExplorer: React.FC = () => {
     }
   };
 
+  // Combines all archived documents and opens them in a new tab for select/copy/download
+  const handleOpenAllArchiveInNewTab = async () => {
+    if (documents.length === 0) {
+      alert('Arşivde birleştirilecek evrak bulunmuyor.');
+      return;
+    }
+
+    try {
+      const allMergedRows: any[] = [];
+      let headers: string[] = [];
+
+      for (const doc of documents) {
+        const rows = await getDocumentRows(doc.id);
+        if (rows.length === 0) continue;
+
+        if (headers.length === 0) {
+          headers = ["Kaynak Evrak", "Belge Türü", "Tarih", ...Object.keys(rows[0].data)];
+        }
+
+        rows.forEach((row) => {
+          const rowObj = {
+            rowNumber: allMergedRows.length + 1,
+            data: {} as Record<string, any>
+          };
+          headers.forEach(h => {
+            if (h === "Kaynak Evrak") rowObj.data[h] = doc.name;
+            else if (h === "Belge Türü") rowObj.data[h] = doc.docType;
+            else if (h === "Tarih") rowObj.data[h] = doc.date;
+            else rowObj.data[h] = row.data[h] === undefined || row.data[h] === null ? '' : row.data[h];
+          });
+          allMergedRows.push(rowObj);
+        });
+      }
+
+      if (allMergedRows.length === 0) {
+        alert('Arşivdeki belgelerden çözümlenmiş tablo verisi bulunamadı.');
+        return;
+      }
+
+      const newWindow = window.open('', '_blank');
+      if (!newWindow) {
+        alert('Yeni sekme açılması tarayıcınız tarafından engellendi. Lütfen pop-up engelleyicisini kaldırın.');
+        return;
+      }
+
+      const tableHeadersHTML = `
+        <tr>
+          <th style="border: 1px solid #cbd5e1; padding: 10px; background-color: #f1f5f9; text-align: center; user-select: none;">#</th>
+          ${headers.map((h, colIdx) => `<th class="selectable-header-col" data-col="${colIdx}" style="border: 1px solid #cbd5e1; padding: 10px; background-color: #f1f5f9; text-align: left;">${h}</th>`).join('')}
+        </tr>
+      `;
+
+      const tableRowsHTML = allMergedRows.map((row, rowIdx) => `
+        <tr>
+          <td class="selectable-header-row" data-row="${rowIdx}" style="border: 1px solid #e2e8f0; padding: 8px; font-weight: bold; text-align: center; background-color: #f8fafc;">${row.rowNumber}</td>
+          ${headers.map((h, colIdx) => {
+            const val = row.data[h];
+            const isNum = typeof val === 'number';
+            const style = isNum ? 'text-align: right; font-weight: bold;' : 'text-align: left;';
+            const displayVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) : (val === undefined || val === null ? '' : String(val));
+            const copyVal = isNum ? val.toLocaleString('tr-TR', { minimumFractionDigits: 2, useGrouping: false }) : displayVal;
+            return `<td class="selectable-cell" data-row="${rowIdx}" data-col="${colIdx}" data-raw="${copyVal}" style="border: 1px solid #e2e8f0; padding: 8px; ${style}">${displayVal}</td>`;
+          }).join('')}
+        </tr>
+      `).join('');
+
+      const pageHTML = `
+        <!DOCTYPE html>
+        <html lang="tr">
+        <head>
+          <meta charset="UTF-8">
+          <title>Birleştirilmiş Tüm Arşiv Verileri</title>
+          <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+          <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+          <style>
+            body {
+              font-family: 'Plus Jakarta Sans', sans-serif;
+              margin: 0;
+              padding: 30px;
+              background-color: #f8fafc;
+              color: #0f172a;
+            }
+            .container {
+              max-width: 100%;
+              margin: 0 auto;
+              background: #ffffff;
+              border-radius: 12px;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+              padding: 24px;
+              border: 1px solid #e2e8f0;
+            }
+            h1 {
+              font-size: 1.5rem;
+              margin-top: 0;
+              margin-bottom: 8px;
+            }
+            .subtitle {
+              font-size: 0.85rem;
+              color: #64748b;
+              margin-bottom: 20px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 0.82rem;
+              margin-top: 15px;
+            }
+            th, td {
+              border: 1px solid #e2e8f0;
+              padding: 10px;
+              white-space: nowrap;
+            }
+            .selectable-cell {
+              user-select: none;
+              -webkit-user-select: none;
+              cursor: cell;
+            }
+            .selected-cell {
+              background-color: rgba(79, 70, 229, 0.16) !important;
+              outline: 1.5px solid #4f46e5;
+              outline-offset: -1.5px;
+            }
+            .selectable-header-col, .selectable-header-row {
+              cursor: pointer;
+              user-select: none;
+            }
+            .selectable-header-col:hover, .selectable-header-row:hover {
+              background-color: #cbd5e1 !important;
+            }
+            .btn {
+              background-color: #4f46e5;
+              color: white;
+              border: none;
+              padding: 8px 16px;
+              font-weight: 600;
+              border-radius: 6px;
+              cursor: pointer;
+              font-size: 0.85rem;
+            }
+            .btn:hover {
+              background-color: #4338ca;
+            }
+            #toast {
+              position: fixed;
+              bottom: 20px;
+              right: 20px;
+              background-color: #10b981;
+              color: white;
+              padding: 12px 24px;
+              border-radius: 8px;
+              font-weight: 600;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+              z-index: 1000;
+              display: none;
+              font-size: 0.85rem;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="toast"></div>
+          <div class="container">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+              <div>
+                <h1>Birleştirilmiş Tüm Arşiv Verileri</h1>
+                <div class="subtitle">
+                  Toplam ${allMergedRows.length} Satır Yüklendi • 
+                  <span style="color: #4f46e5; font-weight: 600;">Fareyle sürükleyerek hücre veya sütun seçip Ctrl+C ile Excel'e doğrudan yapıştırabilirsiniz.</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn" style="background-color: #10b981;" onclick="downloadExcel()">Excel İndir (.xls)</button>
+                <button class="btn" onclick="window.print()">Yazdır / PDF Kaydet</button>
+              </div>
+            </div>
+            <div style="overflow-x: auto;">
+              <table data-max-row="${allMergedRows.length - 1}" data-max-col="${headers.length - 1}">
+                <thead>${tableHeadersHTML}</thead>
+                <tbody>${tableRowsHTML}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <script>
+            window.downloadExcel = function() {
+              if (typeof XLSX === 'undefined') {
+                alert('Excel kütüphanesi yükleniyor, lütfen 1 saniye sonra tekrar deneyin.');
+                return;
+              }
+              const table = document.querySelector('table');
+              const wb = XLSX.utils.table_to_book(table, { raw: true });
+              XLSX.writeFile(wb, 'Tum_Arsiv_Bordro_Verileri.xls', { bookType: 'xls' });
+            };
+
+            const checkExist = setInterval(() => {
+              const cells = document.querySelectorAll('.selectable-cell');
+              if (cells.length > 0) {
+                clearInterval(checkExist);
+                initializeSelection(cells);
+              }
+            }, 30);
+
+            function initializeSelection(cells) {
+              let selectionStart = null;
+              let selectionEnd = null;
+              let isSelecting = false;
+
+              const colHeaders = document.querySelectorAll('.selectable-header-col');
+              const rowHeaders = document.querySelectorAll('.selectable-header-row');
+
+              function getCoords(cell) {
+                return {
+                  r: parseInt(cell.getAttribute('data-row') || '0'),
+                  c: parseInt(cell.getAttribute('data-col') || '0')
+                };
+              }
+
+              function updateSelection() {
+                if (!selectionStart || !selectionEnd) {
+                  cells.forEach(el => el.classList.remove('selected-cell'));
+                  return;
+                }
+                const minR = Math.min(selectionStart.r, selectionEnd.r);
+                const maxR = Math.max(selectionStart.r, selectionEnd.r);
+                const minC = Math.min(selectionStart.c, selectionEnd.c);
+                const maxC = Math.max(selectionStart.c, selectionEnd.c);
+
+                cells.forEach(el => {
+                  const r = parseInt(el.getAttribute('data-row') || '0');
+                  const c = parseInt(el.getAttribute('data-col') || '0');
+                  if (r >= minR && r <= maxR && c >= minC && c <= maxC) {
+                    el.classList.add('selected-cell');
+                  } else {
+                    el.classList.remove('selected-cell');
+                  }
+                });
+              }
+
+              cells.forEach(cell => {
+                cell.addEventListener('mousedown', (e) => {
+                  e.preventDefault();
+                  const coords = getCoords(cell);
+                  selectionStart = coords;
+                  selectionEnd = coords;
+                  isSelecting = true;
+                  updateSelection();
+                });
+
+                cell.addEventListener('mouseenter', (e) => {
+                  if (isSelecting) {
+                    selectionEnd = getCoords(cell);
+                    updateSelection();
+                  }
+                });
+              });
+
+              let autoScrollInterval = null;
+              let mouseX = 0;
+              let mouseY = 0;
+
+              document.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                if (isSelecting) {
+                  startAutoScroll();
+                }
+              });
+
+              function startAutoScroll() {
+                if (autoScrollInterval) return;
+                autoScrollInterval = setInterval(() => {
+                  const scrollSpeed = 15;
+                  const threshold = 60;
+                  const winHeight = window.innerHeight;
+                  const winWidth = window.innerWidth;
+                  let scrollX = 0;
+                  let scrollY = 0;
+
+                  if (mouseY > winHeight - threshold) {
+                    scrollY = scrollSpeed;
+                  } else if (mouseY < threshold) {
+                    scrollY = -scrollSpeed;
+                  }
+
+                  if (mouseX > winWidth - threshold) {
+                    scrollX = scrollSpeed;
+                  } else if (mouseX < threshold) {
+                    scrollX = -scrollSpeed;
+                  }
+
+                  if (scrollX !== 0 || scrollY !== 0) {
+                    window.scrollBy(scrollX, scrollY);
+                    const element = document.elementFromPoint(mouseX, mouseY);
+                    if (element && element.classList.contains('selectable-cell')) {
+                      selectionEnd = getCoords(element);
+                      updateSelection();
+                    }
+                  }
+                }, 30);
+              }
+
+              function stopAutoScroll() {
+                if (autoScrollInterval) {
+                  clearInterval(autoScrollInterval);
+                  autoScrollInterval = null;
+                }
+              }
+
+              document.addEventListener('mouseup', () => {
+                isSelecting = false;
+                stopAutoScroll();
+              });
+
+              document.addEventListener('dragstart', (e) => e.preventDefault());
+              document.addEventListener('selectstart', (e) => e.preventDefault());
+
+              colHeaders.forEach(h => {
+                h.addEventListener('click', () => {
+                  const colIdx = parseInt(h.getAttribute('data-col') || '0');
+                  const table = document.querySelector('table');
+                  const maxRow = parseInt(table.getAttribute('data-max-row') || '0');
+                  selectionStart = { r: 0, c: colIdx };
+                  selectionEnd = { r: maxRow, c: colIdx };
+                  updateSelection();
+                });
+              });
+
+              rowHeaders.forEach(rh => {
+                rh.addEventListener('click', () => {
+                  const rowIdx = parseInt(rh.getAttribute('data-row') || '0');
+                  const table = document.querySelector('table');
+                  const maxCol = parseInt(table.getAttribute('data-max-col') || '0');
+                  selectionStart = { r: rowIdx, c: 0 };
+                  selectionEnd = { r: rowIdx, c: maxCol };
+                  updateSelection();
+                });
+              });
+
+              window.addEventListener('copy', (e) => {
+                if (!selectionStart || !selectionEnd) return;
+                e.preventDefault();
+                const minR = Math.min(selectionStart.r, selectionEnd.r);
+                const maxR = Math.max(selectionStart.r, selectionEnd.r);
+                const minC = Math.min(selectionStart.c, selectionEnd.c);
+                const maxC = Math.max(selectionStart.c, selectionEnd.c);
+
+                const copyLines = [];
+                const table = document.querySelector('table');
+
+                for (let r = minR; r <= maxR; r++) {
+                  const lineCells = [];
+                  for (let c = minC; c <= maxC; c++) {
+                    const cell = table.querySelector('td.selectable-cell[data-row="' + r + '"][data-col="' + c + '"]');
+                    if (cell) {
+                      lineCells.push(cell.getAttribute('data-raw') || cell.innerText);
+                    } else {
+                      lineCells.push('');
+                    }
+                  }
+                  copyLines.push(lineCells.join('\\t'));
+                }
+
+                const tsvString = copyLines.join('\\r\\n');
+                e.clipboardData.setData('text/plain', tsvString);
+
+                const toast = document.getElementById('toast');
+                toast.innerText = 'Seçilen ' + (maxR - minR + 1) + ' satır Excel\'e yapıştırılmak üzere kopyalandı!';
+                toast.style.display = 'block';
+                setTimeout(() => {
+                  toast.style.display = 'none';
+                }, 3000);
+              });
+            }
+          </script>
+        </body>
+        </html>
+      `;
+
+      newWindow.document.write(pageHTML);
+      newWindow.document.close();
+    } catch (err) {
+      console.error('Yeni sekmede birleştirme hatası:', err);
+      alert('Arşiv verileri yeni sekmede açılırken hata oluştu.');
+    }
+  };
+
   // Pagination for Document list
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
@@ -963,29 +1348,53 @@ export const DocumentExplorer: React.FC = () => {
                 </select>
 
                 {documents.length > 0 && (
-                  <button
-                    onClick={handleDownloadAllArchiveExcel}
-                    className="btn btn-success"
-                    style={{
-                      height: '38px',
-                      padding: '0 16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      backgroundColor: '#10b981',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      marginLeft: 'auto'
-                    }}
-                    title="Arşivdeki tüm evrakların verilerini birleştirip tek bir Excel dosyası (.xls) olarak indir"
-                  >
-                    <Download size={14} /> Tüm Arşivi Birleştir ve Excel İndir (.xls)
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
+                    <button
+                      onClick={handleOpenAllArchiveInNewTab}
+                      className="btn"
+                      style={{
+                        height: '38px',
+                        padding: '0 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        backgroundColor: '#4f46e5',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Arşivdeki tüm evrakların verilerini birleştirip yeni sekmede Excel formatında aç"
+                    >
+                      <ExternalLink size={14} /> Tüm Arşivi Yeni Sekmede Aç
+                    </button>
+                    
+                    <button
+                      onClick={handleDownloadAllArchiveExcel}
+                      className="btn btn-success"
+                      style={{
+                        height: '38px',
+                        padding: '0 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        backgroundColor: '#10b981',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Arşivdeki tüm evrakların verilerini birleştirip tek bir Excel dosyası (.xls) olarak indir"
+                    >
+                      <Download size={14} /> Tüm Arşivi Birleştir ve Excel İndir (.xls)
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
