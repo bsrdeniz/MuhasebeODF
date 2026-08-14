@@ -250,108 +250,7 @@ interface PdfTextItem {
   width: number;
 }
 
-function parseTobbBordroRow(rowItems: PdfTextItem[]): Record<string, any> | null {
-  // Sort items from left to right
-  const sorted = [...rowItems].sort((a, b) => a.x - b.x);
-  
-  // Flatten and split tokens
-  const tokens: string[] = [];
-  sorted.forEach(item => {
-    const text = item.text.trim();
-    if (!text) return;
-    
-    // Split TC + Name
-    const tcMatch = text.match(/^(\d{11})\s*(.*)$/);
-    if (tcMatch) {
-      tokens.push(tcMatch[1]);
-      if (tcMatch[2].trim()) {
-        tokens.push(tcMatch[2].trim());
-      }
-      return;
-    }
 
-    // Split space-separated numbers
-    if (text.includes(' ') && /\d+[\.,]\d+/.test(text)) {
-      const parts = text.split(/\s+/).map(p => p.trim()).filter(p => p !== '');
-      tokens.push(...parts);
-      return;
-    }
-
-    tokens.push(text);
-  });
-
-  // Check if it starts with an 11-digit TC
-  if (tokens.length === 0 || !/^\d{11}$/.test(tokens[0])) {
-    return null; // not a personnel data row
-  }
-
-  // Initialize target row
-  const rowMap: Record<string, any> = {
-    "TC Kimlik No": tokens[0],
-    "Adı": "",
-    "Soyadı": "",
-    "Sicil No": "",
-    "Statü": "",
-    "P.E.K.": "",
-    "Ü.A.": "",
-    "T.P.": "",
-    "T.K.": "",
-    "Ç.G.S.": "",
-    "Açıklama": ""
-  };
-
-  let tokenIdx = 1;
-
-  // 1. Parse Name (Adı) - first alphabetic item
-  if (tokenIdx < tokens.length) {
-    rowMap["Adı"] = tokens[tokenIdx];
-    tokenIdx++;
-  }
-
-  // 2. Parse Surname (Soyadı) - second alphabetic item
-  if (tokenIdx < tokens.length) {
-    rowMap["Soyadı"] = tokens[tokenIdx];
-    tokenIdx++;
-  }
-
-  // 3. Parse Sicil No & Statü
-  if (tokenIdx < tokens.length) {
-    const nextToken = tokens[tokenIdx];
-    if (nextToken === "Çalısan" || nextToken === "Çalışan" || nextToken.toLowerCase().includes("çalışan") || nextToken.toLowerCase().includes("calisan")) {
-      rowMap["Statü"] = nextToken;
-      tokenIdx++;
-    } else {
-      rowMap["Sicil No"] = nextToken;
-      tokenIdx++;
-      if (tokenIdx < tokens.length) {
-        rowMap["Statü"] = tokens[tokenIdx];
-        tokenIdx++;
-      }
-    }
-  }
-
-  // 4. Parse money columns: P.E.K., Ü.A., T.P., T.K.
-  const moneyColumns = ["P.E.K.", "Ü.A.", "T.P.", "T.K."];
-  moneyColumns.forEach(col => {
-    if (tokenIdx < tokens.length) {
-      rowMap[col] = tokens[tokenIdx];
-      tokenIdx++;
-    }
-  });
-
-  // 5. Parse Ç.G.S.
-  if (tokenIdx < tokens.length) {
-    rowMap["Ç.G.S."] = tokens[tokenIdx];
-    tokenIdx++;
-  }
-
-  // 6. Parse Açıklama
-  if (tokenIdx < tokens.length) {
-    rowMap["Açıklama"] = tokens.slice(tokenIdx).join(' ');
-  }
-
-  return rowMap;
-}
 
 // Core Coordinate-Based PDF Table Parsing Algorithm
 export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
@@ -491,7 +390,7 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
             });
           });
         } else {
-          // MODE A: Structured TOBB Payroll document
+          // MODE A: Structured TOBB Payroll / BES List / Other structured documents
           pageDataList.forEach((pageData) => {
             const { mergedRows, headerRowIndex } = pageData;
             if (headerRowIndex === -1) return;
@@ -547,12 +446,127 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
               return splitItems.sort((a, b) => a.x - b.x);
             });
 
+            // Extract the header columns dynamically based on X coordinates
+            interface HeaderColumn {
+              key: string;
+              xStart: number;
+              xEnd: number;
+              center: number;
+            }
+
+            const headerRow = postSplitRows[headerRowIndex];
+            const headerColumns: HeaderColumn[] = [];
+            
+            headerRow.forEach((hItem: PdfTextItem) => {
+              const text = hItem.text.toLowerCase();
+              let key = '';
+              if (text.includes('tc') || text.includes('kimlik') || text.includes('tckn')) {
+                key = 'TC Kimlik No';
+              } else if (text.includes('ad') && text.includes('soyad')) {
+                key = 'Adı Soyadı';
+              } else if (text.includes('ad')) {
+                key = 'Adı';
+              } else if (text.includes('soyad')) {
+                key = 'Soyadı';
+              } else if (text.includes('sicil')) {
+                key = 'Sicil No';
+              } else if (text.includes('statü') || text.includes('statu')) {
+                key = 'Statü';
+              } else if (text.includes('p.e.k')) {
+                key = 'P.E.K.';
+              } else if (text.includes('ü.a')) {
+                key = 'Ü.A.';
+              } else if (text.includes('t.p')) {
+                key = 'T.P.';
+              } else if (text.includes('t.k')) {
+                key = 'T.K.';
+              } else if (text.includes('ç.g.s')) {
+                key = 'Ç.G.S.';
+              } else if (text.includes('bes')) {
+                key = 'Bes';
+              } else if (text.includes('açıklama')) {
+                key = 'Açıklama';
+              } else {
+                key = hItem.text.charAt(0).toUpperCase() + hItem.text.slice(1);
+              }
+
+              headerColumns.push({
+                key,
+                xStart: hItem.x,
+                xEnd: hItem.x + hItem.width,
+                center: hItem.x + hItem.width / 2
+              });
+            });
+
             const dataRows = postSplitRows.filter((_: any, idx: number) => mergedRows[idx].y < headerY);
 
             dataRows.forEach((row: any) => {
-              const rowMap = parseTobbBordroRow(row);
-              if (rowMap) {
-                allPageRows.push(rowMap);
+              // Initialize target row structure
+              const rowMap: Record<string, any> = {
+                "TC Kimlik No": "",
+                "Adı": "",
+                "Soyadı": "",
+                "Sicil No": "",
+                "Statü": "",
+                "P.E.K.": "",
+                "Ü.A.": "",
+                "T.P.": "",
+                "T.K.": "",
+                "Ç.G.S.": "",
+                "Bes": "",
+                "Açıklama": ""
+              };
+
+              let hasValidData = false;
+
+              row.forEach((item: any) => {
+                const itemText = item.text.trim();
+                if (itemText === '') return;
+
+                // Find the closest header column
+                let closestCol: HeaderColumn | null = null;
+                let minDistance = Infinity;
+
+                headerColumns.forEach((col) => {
+                  const dist = Math.abs(item.x + item.width / 2 - col.center);
+                  if (dist < minDistance) {
+                    minDistance = dist;
+                    closestCol = col;
+                  }
+                });
+
+                if (closestCol) {
+                  const colKey = (closestCol as HeaderColumn).key;
+
+                  if (colKey === "Adı Soyadı") {
+                    const parts = itemText.split(/\s+/);
+                    if (parts.length > 1) {
+                      rowMap["Soyadı"] = parts[parts.length - 1];
+                      rowMap["Adı"] = parts.slice(0, -1).join(' ');
+                    } else {
+                      rowMap["Adı"] = itemText;
+                    }
+                  } else {
+                    rowMap[colKey] = itemText;
+                  }
+
+                  if (["TC Kimlik No", "Adı", "Soyadı", "Sicil No"].includes(colKey)) {
+                    hasValidData = true;
+                  }
+                }
+              });
+
+              if (hasValidData) {
+                const isTotalRow = Object.values(rowMap).some(val => 
+                  typeof val === 'string' && (val.toLowerCase().includes('toplam') || val.toLowerCase().includes('toplarn'))
+                );
+                
+                const hasTcOrName = (rowMap["TC Kimlik No"] && /^\d+$/.test(rowMap["TC Kimlik No"])) || 
+                                    (rowMap["Adı"] && rowMap["Adı"].length > 1);
+
+                if (!isTotalRow && hasTcOrName) {
+                  allPageRows.push(rowMap);
+                }
               }
             });
           });
