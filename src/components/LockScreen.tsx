@@ -141,31 +141,16 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
         </div>
 
         <form onSubmit={handleAction} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {isFirstTime && (
-            <div style={{
-              fontSize: '0.78rem',
-              color: '#38bdf8',
-              backgroundColor: 'rgba(56, 189, 248, 0.1)',
-              border: '1px solid rgba(56, 189, 248, 0.2)',
-              padding: '10px 14px',
-              borderRadius: '10px',
-              textAlign: 'left',
-              lineHeight: '140%'
-            }}>
-              ℹ️ <strong>E-posta yazmanıza gerek yoktur!</strong> Sistem tamamen yerel çalışır. İlk kutuya şifrenizi (örn: <code>Vantso1962.</code>) girin, ikinci kutuya da onaylamak için <strong>aynı şifreyi</strong> tekrar yazın.
-            </div>
-          )}
-
           {/* Password Input */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              {isFirstTime ? '1. Şifreyi Girin' : 'Master Şifre'}
+              {isFirstTime ? 'Master Şifre Belirleyin' : 'Master Şifre'}
             </label>
             <div style={{ position: 'relative' }}>
               <KeyRound size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder={isFirstTime ? 'Kilit şifrenizi yazın (örn: Vantso1962.)' : '••••••••'}
+                placeholder="••••••••"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -208,13 +193,13 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
           {isFirstTime && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                2. Şifreyi Onaylayın (Aynı Şifreyi Tekrar Girin)
+                Şifreyi Onaylayın
               </label>
               <div style={{ position: 'relative' }}>
                 <KeyRound size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Şifrenizi onaylamak için tekrar yazın"
+                  placeholder="••••••••"
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
