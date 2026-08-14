@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Search, Trash2, Eye, Download, Calendar, FileText, ChevronLeft, ChevronRight, X, ExternalLink, Clipboard, Check, Sheet } from 'lucide-react';
-import { getDocuments, deleteDocument, getDocumentRows, type DocumentItem, type DocumentRow } from '../db';
+import { Search, Trash2, Eye, Download, Calendar, FileText, ChevronLeft, ChevronRight, X, ExternalLink, Clipboard, Check, Sheet, FileSpreadsheet } from 'lucide-react';
+import { getDocuments, deleteDocument, getDocumentRows, saveDocumentAndRows, type DocumentItem, type DocumentRow } from '../db';
+import { parsePdfTableRows, autoExtractMetadata } from '../utils/extractor';
 
 interface DocumentExplorerProps {
   cryptoKey: CryptoKey | null;
@@ -77,6 +78,34 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
     return String(val);
   };
 
+  const normalizeNumber = (val: any) => {
+    if (typeof val === 'string' && val.trim() !== '') {
+      const normalized = val.replace(/\s/g, '');
+      const isNumeric = /^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(normalized) || /^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(normalized) || /^-?\d+(\.\d+)?$/.test(normalized);
+      if (isNumeric) {
+        let num = NaN;
+        if (normalized.includes(',') && normalized.includes('.')) {
+          if (normalized.indexOf(',') > normalized.indexOf('.')) {
+            num = parseFloat(normalized.replace(/\./g, '').replace(',', '.'));
+          } else {
+            num = parseFloat(normalized.replace(/,/g, ''));
+          }
+        } else if (normalized.includes(',')) {
+          const parts = normalized.split(',');
+          if (parts[1].length <= 2) {
+            num = parseFloat(normalized.replace(',', '.'));
+          } else {
+            num = parseFloat(normalized.replace(/,/g, ''));
+          }
+        } else {
+          num = parseFloat(normalized);
+        }
+        if (!isNaN(num)) return num;
+      }
+    }
+    return val;
+  };
+
   const loadDocuments = async () => {
     setIsLoading(true);
     try {
@@ -132,12 +161,55 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
     setCurrentPage(1);
   }, [documents, searchTerm, selectedType, selectedCategory, sortOrder]);
 
-  // Load spreadsheet rows when a document is selected
+  // Load spreadsheet rows when a document is selected (with instant auto-reparse fallback)
   useEffect(() => {
     const loadRows = async () => {
       if (previewDoc) {
         try {
-          const rows = await getDocumentRows(previewDoc.id, cryptoKey);
+          let rows = await getDocumentRows(previewDoc.id, cryptoKey);
+
+          // AUTO-REPARSE: If 0 rows are found, parse the PDF on the fly and save to DB
+          if (rows.length === 0 && previewDoc.fileData) {
+            try {
+              let parsedRows: Record<string, any>[] = [];
+              if (previewDoc.fileType === 'PDF') {
+                parsedRows = await parsePdfTableRows(previewDoc.fileData);
+              }
+              if (parsedRows.length > 0) {
+                const cleaned = parsedRows.map(r => {
+                  const cleanRow: Record<string, any> = {};
+                  Object.entries(r).forEach(([k, v]) => {
+                    cleanRow[k] = normalizeNumber(v);
+                  });
+                  return cleanRow;
+                });
+                
+                const newDocRows: DocumentRow[] = cleaned.map((r, idx) => ({
+                  id: `row_${previewDoc.id}_${idx}_${Math.random().toString(36).substring(2, 9)}`,
+                  docId: previewDoc.id,
+                  rowNumber: idx + 1,
+                  data: r
+                }));
+
+                const meta = await autoExtractMetadata(previewDoc.fileData);
+                const updatedDoc = {
+                  ...previewDoc,
+                  name: (previewDoc.name === previewDoc.fileName || previewDoc.docType === 'Diğer') ? meta.name : previewDoc.name,
+                  docType: meta.docType,
+                  category: meta.category,
+                  description: meta.description
+                };
+
+                await saveDocumentAndRows(updatedDoc, newDocRows, cryptoKey);
+                rows = newDocRows;
+                setPreviewDoc(updatedDoc);
+                loadDocuments();
+              }
+            } catch (reErr) {
+              console.error('Otomatik reparse hatası:', reErr);
+            }
+          }
+
           setDocRows(rows);
           setFilteredDocRows(rows);
           setRowSearchTerm('');
@@ -161,7 +233,7 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
       }
     };
     loadRows();
-  }, [previewDoc, cryptoKey]);
+  }, [previewDoc?.id, cryptoKey]);
 
   // Filter document rows inside "Tablo Verileri" tab
   useEffect(() => {
@@ -792,6 +864,80 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
     URL.revokeObjectURL(url);
   };
 
+  // Direct single-document Excel (.xls) download from document card
+  const handleDirectDownloadDocExcel = async (doc: DocumentItem) => {
+    try {
+      let rows = await getDocumentRows(doc.id, cryptoKey);
+      if (rows.length === 0 && doc.fileData) {
+        try {
+          let parsedRows: Record<string, any>[] = [];
+          if (doc.fileType === 'PDF') {
+            parsedRows = await parsePdfTableRows(doc.fileData);
+          }
+          if (parsedRows.length > 0) {
+            const cleaned = parsedRows.map(r => {
+              const cleanRow: Record<string, any> = {};
+              Object.entries(r).forEach(([k, v]) => {
+                cleanRow[k] = normalizeNumber(v);
+              });
+              return cleanRow;
+            });
+            const newDocRows: DocumentRow[] = cleaned.map((r, idx) => ({
+              id: `row_${doc.id}_${idx}_${Math.random().toString(36).substring(2, 9)}`,
+              docId: doc.id,
+              rowNumber: idx + 1,
+              data: r
+            }));
+            const meta = await autoExtractMetadata(doc.fileData);
+            const updatedDoc = {
+              ...doc,
+              name: (doc.name === doc.fileName || doc.docType === 'Diğer') ? meta.name : doc.name,
+              docType: meta.docType,
+              category: meta.category,
+              description: meta.description
+            };
+            await saveDocumentAndRows(updatedDoc, newDocRows, cryptoKey);
+            rows = newDocRows;
+            loadDocuments();
+          }
+        } catch (e) {
+          console.error('Doğrudan reparse hatası:', e);
+        }
+      }
+
+      if (rows.length === 0) {
+        alert('Bu belgeden çözümlenmiş tablo verisi bulunamadı.');
+        return;
+      }
+
+      const headers = Object.keys(rows[0].data);
+      const dataMatrix = [
+        headers,
+        ...rows.map(row => 
+          headers.map(h => formatCopyValue(row.data[h], h))
+        )
+      ];
+
+      const worksheet = XLSX.utils.aoa_to_sheet(dataMatrix);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Tablo Verileri');
+
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xls', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = `${doc.name || 'tablo'}_verileri.xls`;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Doğrudan Excel indirme hatası:', err);
+      alert('Excel dosyası oluşturulurken hata oluştu.');
+    }
+  };
+
   // Merges and downloads ALL archived documents into a single combined Excel spreadsheet (.xls)
   const handleDownloadAllArchiveExcel = async () => {
     if (documents.length === 0) {
@@ -804,7 +950,32 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
       let headers: string[] = [];
 
       for (const doc of documents) {
-        const rows = await getDocumentRows(doc.id, cryptoKey);
+        let rows = await getDocumentRows(doc.id, cryptoKey);
+        if (rows.length === 0 && doc.fileData) {
+          try {
+            let parsedRows: Record<string, any>[] = [];
+            if (doc.fileType === 'PDF') {
+              parsedRows = await parsePdfTableRows(doc.fileData);
+            }
+            if (parsedRows.length > 0) {
+              const cleaned = parsedRows.map(r => {
+                const cleanRow: Record<string, any> = {};
+                Object.entries(r).forEach(([k, v]) => {
+                  cleanRow[k] = normalizeNumber(v);
+                });
+                return cleanRow;
+              });
+              const newDocRows: DocumentRow[] = cleaned.map((r, idx) => ({
+                id: `row_${doc.id}_${idx}_${Math.random().toString(36).substring(2, 9)}`,
+                docId: doc.id,
+                rowNumber: idx + 1,
+                data: r
+              }));
+              await saveDocumentAndRows(doc, newDocRows, cryptoKey);
+              rows = newDocRows;
+            }
+          } catch (e) {}
+        }
         if (rows.length === 0) continue;
 
         // Determine spreadsheet headers on first document hit
@@ -867,7 +1038,32 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
       let headers: string[] = [];
 
       for (const doc of documents) {
-        const rows = await getDocumentRows(doc.id, cryptoKey);
+        let rows = await getDocumentRows(doc.id, cryptoKey);
+        if (rows.length === 0 && doc.fileData) {
+          try {
+            let parsedRows: Record<string, any>[] = [];
+            if (doc.fileType === 'PDF') {
+              parsedRows = await parsePdfTableRows(doc.fileData);
+            }
+            if (parsedRows.length > 0) {
+              const cleaned = parsedRows.map(r => {
+                const cleanRow: Record<string, any> = {};
+                Object.entries(r).forEach(([k, v]) => {
+                  cleanRow[k] = normalizeNumber(v);
+                });
+                return cleanRow;
+              });
+              const newDocRows: DocumentRow[] = cleaned.map((r, idx) => ({
+                id: `row_${doc.id}_${idx}_${Math.random().toString(36).substring(2, 9)}`,
+                docId: doc.id,
+                rowNumber: idx + 1,
+                data: r
+              }));
+              await saveDocumentAndRows(doc, newDocRows, cryptoKey);
+              rows = newDocRows;
+            }
+          } catch (e) {}
+        }
         if (rows.length === 0) continue;
 
         if (headers.length === 0) {
@@ -1496,33 +1692,57 @@ export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey })
                     </div>
 
                     {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-                      <button
-                        onClick={() => handlePreview(doc)}
-                        className="btn btn-secondary"
-                        style={{ flex: 1, padding: '8px 10px', fontSize: '0.8rem', gap: '4px' }}
-                      >
-                        <Eye size={14} /> Detay & Önizleme
-                      </button>
-                      <button
-                        onClick={() => handleDownload(doc)}
-                        className="btn btn-secondary btn-icon"
-                        title="İndir"
-                      >
-                        <Download size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(doc.id)}
-                        className="btn btn-danger btn-icon"
-                        title="Sil"
-                        style={{
-                          backgroundColor: 'transparent',
-                          borderColor: 'var(--border-color)',
-                          color: 'var(--danger)',
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handlePreview(doc)}
+                          className="btn btn-primary"
+                          style={{ flex: 1, padding: '8px 10px', fontSize: '0.8rem', gap: '4px', backgroundColor: 'var(--primary)' }}
+                        >
+                          <Eye size={14} /> Detay & Önizleme
+                        </button>
+                        <button
+                          onClick={() => handleDirectDownloadDocExcel(doc)}
+                          className="btn"
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '0.8rem',
+                            gap: '4px',
+                            backgroundColor: '#10b981',
+                            color: '#ffffff',
+                            borderRadius: '6px',
+                            fontWeight: 600,
+                            border: 'none',
+                            cursor: 'pointer'
+                          }}
+                          title="Doğrudan Excel (.xls) Olarak İndir"
+                        >
+                          <FileSpreadsheet size={14} /> Excel İndir
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleDownload(doc)}
+                          className="btn btn-secondary"
+                          style={{ flex: 1, padding: '6px 10px', fontSize: '0.75rem', gap: '4px' }}
+                          title="Orijinal PDF Dosyasını İndir"
+                        >
+                          <Download size={13} /> Orijinal PDF
+                        </button>
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          className="btn btn-danger btn-icon"
+                          title="Sil"
+                          style={{
+                            backgroundColor: 'transparent',
+                            borderColor: 'var(--border-color)',
+                            color: 'var(--danger)',
+                            padding: '6px 10px'
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}

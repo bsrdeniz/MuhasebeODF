@@ -164,7 +164,7 @@ async function ensurePdfJsLoaded(): Promise<any> {
 }
 
 // Extracts plain text from PDF
-async function extractPdfText(file: File): Promise<string> {
+async function extractPdfText(file: File | Blob): Promise<string> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -196,7 +196,7 @@ async function extractPdfText(file: File): Promise<string> {
 }
 
 // Extracts spreadsheet text
-function extractSpreadsheetText(file: File): Promise<string> {
+function extractSpreadsheetText(file: File | Blob): Promise<string> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -224,8 +224,9 @@ function extractSpreadsheetText(file: File): Promise<string> {
   });
 }
 
-export async function autoExtractMetadata(file: File): Promise<ExtractedMetadata> {
-  const fileExt = file.name.split('.').pop()?.toLowerCase();
+export async function autoExtractMetadata(file: File | Blob, customFileName?: string): Promise<ExtractedMetadata> {
+  const fileName = (file as File).name || customFileName || 'belge.pdf';
+  const fileExt = fileName.split('.').pop()?.toLowerCase();
   let extractedText = '';
 
   if (fileExt === 'pdf') {
@@ -240,7 +241,7 @@ export async function autoExtractMetadata(file: File): Promise<ExtractedMetadata
     });
   }
 
-  return analyzeText(extractedText, file.name);
+  return analyzeText(extractedText, fileName);
 }
 
 interface PdfTextItem {
@@ -253,7 +254,7 @@ interface PdfTextItem {
 
 
 // Core Coordinate-Based PDF Table Parsing Algorithm
-export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
+export function parsePdfTableRows(file: File | Blob): Promise<Record<string, any>[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -264,7 +265,6 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
         const pdf = await loadingTask.promise;
 
         let allPageRows: Record<string, any>[] = [];
-        let isTobbBordro = false;
         const pageDataList: any[] = [];
 
         // Scan all pages in the PDF
@@ -345,7 +345,6 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
             
             if (matchCount >= 3) {
               headerRowIndex = i;
-              isTobbBordro = true;
               break;
             }
           }
@@ -356,107 +355,23 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
           });
         }
 
-        // Dual-Mode Processing:
-        if (!isTobbBordro) {
-          // MODE B: General layout document - Convert text coordinates directly to generic columns
-          pageDataList.forEach((pageData) => {
-            pageData.mergedRows.forEach((rowObj: any) => {
-              const rowMap: Record<string, any> = {};
-              let hasText = false;
-              
-              rowObj.items.forEach((item: any, colIdx: number) => {
-                const text = item.text.trim();
-                if (text !== '') {
-                  // Format check: Convert formatted numbers like '11.793,00' or decimals to standard floats
-                  const cleanText = text.replace(/\./g, '').replace(/,/g, '.');
-                  const num = parseFloat(cleanText);
-                  
-                  if (!isNaN(num) && /^[\d\.,]+$/.test(text) && !text.includes('/') && !text.includes('-')) {
-                    if (text.length >= 9 && /^\d+$/.test(text)) {
-                      rowMap[`Sütun ${colIdx + 1}`] = text; // Keep TC/IDs as plain string
-                    } else {
-                      rowMap[`Sütun ${colIdx + 1}`] = num;
-                    }
-                  } else {
-                    rowMap[`Sütun ${colIdx + 1}`] = text;
-                  }
-                  hasText = true;
-                }
-              });
-              
-              if (hasText) {
-                allPageRows.push(rowMap);
-              }
-            });
-          });
-        } else {
-          // MODE A: Structured TOBB Payroll / BES List / Other structured documents
-          pageDataList.forEach((pageData) => {
-            const { mergedRows, headerRowIndex } = pageData;
-            if (headerRowIndex === -1) return;
+        // Universal Multi-Pass PDF Table Extraction Engine
+        interface HeaderColumn {
+          key: string;
+          xStart: number;
+          xEnd: number;
+          center: number;
+        }
 
-            const headerY = mergedRows[headerRowIndex].y;
-            
-            const postSplitRows = mergedRows.map((rowObj: any) => {
-              const splitItems: PdfTextItem[] = [];
-              rowObj.items.forEach((item: any) => {
-                const tcMatch = item.text.match(/^(\d{11})\s*(.*)$/);
-                if (tcMatch) {
-                  const tcStr = tcMatch[1];
-                  const nameStr = tcMatch[2].trim();
-                  const tcWidth = item.width * (tcStr.length / item.text.length);
-                  
-                  splitItems.push({
-                    text: tcStr,
-                    x: item.x,
-                    y: item.y,
-                    width: tcWidth
-                  });
+        let lastKnownHeaderColumns: HeaderColumn[] = [];
 
-                  if (nameStr) {
-                    const nameWidth = item.width - tcWidth;
-                    splitItems.push({
-                      text: nameStr,
-                      x: item.x + tcWidth + 4,
-                      y: item.y,
-                      width: nameWidth
-                    });
-                  }
-                  return;
-                }
+        pageDataList.forEach((pageData) => {
+          const { mergedRows, headerRowIndex } = pageData;
+          let currentHeaderColumns: HeaderColumn[] = [];
+          let dataStartIndex = 0;
 
-                if (item.text.includes(' ') && /\d+[\.,]\d+/.test(item.text)) {
-                  const parts = item.text.split(/\s+/).map((p: any) => p.trim()).filter((p: any) => p !== '');
-                  if (parts.length > 1) {
-                    const partWidth = item.width / parts.length;
-                    parts.forEach((part: any, idx: number) => {
-                      splitItems.push({
-                        text: part,
-                        x: item.x + idx * partWidth,
-                        y: item.y,
-                        width: partWidth
-                      });
-                    });
-                    return;
-                  }
-                }
-
-                splitItems.push(item);
-              });
-              return splitItems.sort((a, b) => a.x - b.x);
-            });
-
-            // Extract the header columns dynamically based on X coordinates
-            interface HeaderColumn {
-              key: string;
-              xStart: number;
-              xEnd: number;
-              center: number;
-            }
-
-            const headerRow = postSplitRows[headerRowIndex];
-            const headerColumns: HeaderColumn[] = [];
-            
+          if (headerRowIndex !== -1) {
+            const headerRow = mergedRows[headerRowIndex].items;
             headerRow.forEach((hItem: PdfTextItem) => {
               const text = hItem.text.toLowerCase();
               let key = '';
@@ -490,7 +405,7 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                 key = hItem.text.charAt(0).toUpperCase() + hItem.text.slice(1);
               }
 
-              headerColumns.push({
+              currentHeaderColumns.push({
                 key,
                 xStart: hItem.x,
                 xEnd: hItem.x + hItem.width,
@@ -498,36 +413,30 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
               });
             });
 
-            const dataRows = postSplitRows.filter((_: any, idx: number) => mergedRows[idx].y < headerY);
+            lastKnownHeaderColumns = currentHeaderColumns;
+            dataStartIndex = headerRowIndex + 1;
+          } else if (lastKnownHeaderColumns.length > 0) {
+            currentHeaderColumns = lastKnownHeaderColumns;
+            dataStartIndex = 0;
+          }
 
-            dataRows.forEach((row: any) => {
-              // Initialize target row structure
-              const rowMap: Record<string, any> = {
-                "TC Kimlik No": "",
-                "Adı": "",
-                "Soyadı": "",
-                "Sicil No": "",
-                "Statü": "",
-                "P.E.K.": "",
-                "Ü.A.": "",
-                "T.P.": "",
-                "T.K.": "",
-                "Ç.G.S.": "",
-                "Bes": "",
-                "Açıklama": ""
-              };
-
+          if (currentHeaderColumns.length > 0) {
+            // Parse structured rows using current/inherited header columns
+            const candidateRows = mergedRows.slice(dataStartIndex);
+            
+            candidateRows.forEach((rowObj: any) => {
+              const row = rowObj.items;
+              const rowMap: Record<string, any> = {};
               let hasValidData = false;
 
               row.forEach((item: any) => {
                 const itemText = item.text.trim();
                 if (itemText === '') return;
 
-                // Find the closest header column
                 let closestCol: HeaderColumn | null = null;
                 let minDistance = Infinity;
 
-                headerColumns.forEach((col) => {
+                currentHeaderColumns.forEach((col) => {
                   const dist = Math.abs(item.x + item.width / 2 - col.center);
                   if (dist < minDistance) {
                     minDistance = dist;
@@ -541,8 +450,8 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                   if (colKey === "Adı Soyadı") {
                     const parts = itemText.split(/\s+/);
                     if (parts.length > 1) {
-                      rowMap["Soyadı"] = parts[parts.length - 1];
                       rowMap["Adı"] = parts.slice(0, -1).join(' ');
+                      rowMap["Soyadı"] = parts[parts.length - 1];
                     } else {
                       rowMap["Adı"] = itemText;
                     }
@@ -550,9 +459,7 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                     rowMap[colKey] = itemText;
                   }
 
-                  if (["TC Kimlik No", "Adı", "Soyadı", "Sicil No"].includes(colKey)) {
-                    hasValidData = true;
-                  }
+                  hasValidData = true;
                 }
               });
 
@@ -561,12 +468,43 @@ export function parsePdfTableRows(file: File): Promise<Record<string, any>[]> {
                   typeof val === 'string' && (val.toLowerCase().includes('toplam') || val.toLowerCase().includes('toplarn'))
                 );
                 
-                const hasTcOrName = (rowMap["TC Kimlik No"] && /^\d+$/.test(rowMap["TC Kimlik No"])) || 
-                                    (rowMap["Adı"] && rowMap["Adı"].length > 1);
-
-                if (!isTotalRow && hasTcOrName) {
+                // Keep if it has non-empty fields and is not a total summary
+                if (!isTotalRow && Object.keys(rowMap).length > 0) {
                   allPageRows.push(rowMap);
                 }
+              }
+            });
+          }
+        });
+
+        // FALLBACK: If structured parsing produced 0 rows, run generic coordinate-to-column conversion
+        if (allPageRows.length === 0) {
+          pageDataList.forEach((pageData) => {
+            pageData.mergedRows.forEach((rowObj: any) => {
+              const rowMap: Record<string, any> = {};
+              let hasText = false;
+              
+              rowObj.items.forEach((item: any, colIdx: number) => {
+                const text = item.text.trim();
+                if (text !== '') {
+                  const cleanText = text.replace(/\./g, '').replace(/,/g, '.');
+                  const num = parseFloat(cleanText);
+                  
+                  if (!isNaN(num) && /^[\d\.,]+$/.test(text) && !text.includes('/') && !text.includes('-')) {
+                    if (text.length >= 9 && /^\d+$/.test(text)) {
+                      rowMap[`Sütun ${colIdx + 1}`] = text;
+                    } else {
+                      rowMap[`Sütun ${colIdx + 1}`] = num;
+                    }
+                  } else {
+                    rowMap[`Sütun ${colIdx + 1}`] = text;
+                  }
+                  hasText = true;
+                }
+              });
+              
+              if (hasText) {
+                allPageRows.push(rowMap);
               }
             });
           });
