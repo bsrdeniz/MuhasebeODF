@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { ShieldCheck, Lock, Eye, EyeOff, KeyRound, Mail } from 'lucide-react';
 import { setupPassword, verifyPassword } from '../utils/crypto';
 
 interface LockScreenProps {
@@ -8,6 +8,7 @@ interface LockScreenProps {
 
 export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
   const [isFirstTime, setIsFirstTime] = useState(false);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -34,6 +35,14 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
     setIsLoading(true);
 
     try {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        setError('Lütfen geçerli bir e-posta adresi girin!');
+        triggerWiggle();
+        setIsLoading(false);
+        return;
+      }
+
       if (isFirstTime) {
         // Setup Password
         if (password.length < 6) {
@@ -50,6 +59,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
         }
 
         const { salt, hash } = await setupPassword(password);
+        localStorage.setItem('muhasebe_email', email.trim().toLowerCase());
         localStorage.setItem('muhasebe_salt', salt);
         localStorage.setItem('muhasebe_hash', hash);
         
@@ -63,6 +73,14 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
         }
       } else {
         // Unlock
+        const savedEmail = localStorage.getItem('muhasebe_email') || '';
+        if (email.trim().toLowerCase() !== savedEmail.trim().toLowerCase()) {
+          setError('Girdiğiniz E-posta veya Şifre hatalı!');
+          triggerWiggle();
+          setIsLoading(false);
+          return;
+        }
+
         const salt = localStorage.getItem('muhasebe_salt') || '';
         const hash = localStorage.getItem('muhasebe_hash') || '';
         
@@ -70,7 +88,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
         if (derivedKey) {
           onUnlock(derivedKey);
         } else {
-          setError('Girdiğiniz Master Şifre hatalı!');
+          setError('Girdiğiniz E-posta veya Şifre hatalı!');
           triggerWiggle();
         }
       }
@@ -130,21 +148,50 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
 
         <div>
           <h2 className="text-h2" style={{ color: '#ffffff', fontSize: '1.4rem', fontWeight: 800, marginBottom: '8px' }}>
-            {isFirstTime ? 'Master Şifre Belirleyin' : 'Muhasebe Portalı Kilitli'}
+            {isFirstTime ? 'Yönetici Hesabı Oluşturun' : 'Muhasebe Giriş Portalı'}
           </h2>
           <p style={{ color: '#94a3b8', fontSize: '0.85rem', lineHeight: '145%', maxWidth: '340px', margin: '0 auto' }}>
             {isFirstTime 
-              ? 'Verilerinizi yerel bilgisayarınızda AES-256 algoritmasıyla şifrelemek için güçlü bir şifre belirleyin. Şifre asla internete gönderilmez.'
-              : 'Kişisel ve finansal verilerin şifresini yerel olarak çözmek için lütfen şifrenizi girin.'
+              ? 'Verilerinizi yerel bilgisayarınızda AES-256 ile şifrelemek için e-posta ve şifre belirleyin.'
+              : 'Verilerin şifresini çözmek ve sisteme erişmek için giriş yapın.'
             }
           </p>
         </div>
 
         <form onSubmit={handleAction} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Email Input */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              E-posta Adresi
+            </label>
+            <div style={{ position: 'relative' }}>
+              <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+              <input
+                type="email"
+                placeholder="muhasebe@vantso.org.tr"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="form-input"
+                style={{
+                  width: '100%',
+                  paddingLeft: '38px',
+                  paddingRight: '12px',
+                  backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  color: '#ffffff',
+                  borderRadius: '10px',
+                  height: '42px',
+                  fontSize: '0.9rem'
+                }}
+              />
+            </div>
+          </div>
+
           {/* Password Input */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              {isFirstTime ? 'Master Şifre Belirleyin' : 'Master Şifre'}
+              {isFirstTime ? 'Şifre Belirleyin' : 'Şifre'}
             </label>
             <div style={{ position: 'relative' }}>
               <KeyRound size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
@@ -251,7 +298,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
               marginTop: '8px'
             }}
           >
-            {isLoading ? 'İşleniyor...' : isFirstTime ? 'Şifreyi Kaydet ve Kilitle' : 'Giriş Yap ve Verileri Çöz'}
+            {isLoading ? 'İşleniyor...' : isFirstTime ? 'Hesap Oluştur ve Kilitle' : 'Giriş Yap'}
           </button>
         </form>
 
