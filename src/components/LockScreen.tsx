@@ -29,6 +29,15 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
     setTimeout(() => setIsWiggling(false), 500);
   };
 
+  const handleReset = () => {
+    if (window.confirm('⚠️ SİSTEMİ SIFIRLA: Eğer şifrenizi unuttuysanız sistemi sıfırlayabilirsiniz. Ancak sıfırlama işlemi sonrasında daha önce yüklemiş olduğunuz tüm şifreli arşiv belgelerine erişiminiz KALICI OLARAK KAYBOLACAKTIR. Devam etmek istiyor musunuz?')) {
+      localStorage.removeItem('muhasebe_email');
+      localStorage.removeItem('muhasebe_salt');
+      localStorage.removeItem('muhasebe_hash');
+      window.location.reload();
+    }
+  };
+
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -74,7 +83,8 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
       } else {
         // Unlock
         const savedEmail = localStorage.getItem('muhasebe_email') || '';
-        if (email.trim().toLowerCase() !== savedEmail.trim().toLowerCase()) {
+        // If there's a saved email, validate it. Otherwise (migration) bypass and save it on success.
+        if (savedEmail && email.trim().toLowerCase() !== savedEmail.trim().toLowerCase()) {
           setError('Girdiğiniz E-posta veya Şifre hatalı!');
           triggerWiggle();
           setIsLoading(false);
@@ -86,6 +96,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
         
         const derivedKey = await verifyPassword(password, salt, hash);
         if (derivedKey) {
+          if (!savedEmail) {
+            localStorage.setItem('muhasebe_email', email.trim().toLowerCase());
+          }
           onUnlock(derivedKey);
         } else {
           setError('Girdiğiniz E-posta veya Şifre hatalı!');
@@ -300,6 +313,26 @@ export const LockScreen: React.FC<LockScreenProps> = ({ onUnlock }) => {
           >
             {isLoading ? 'İşleniyor...' : isFirstTime ? 'Hesap Oluştur ve Kilitle' : 'Giriş Yap'}
           </button>
+
+          {!isFirstTime && (
+            <button
+              type="button"
+              onClick={handleReset}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                textDecoration: 'underline',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                marginTop: '4px',
+                width: '100%',
+                textAlign: 'center'
+              }}
+            >
+              Şifremi Sıfırla (Mevcut Arşiv Temizlenir)
+            </button>
+          )}
         </form>
 
         <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', width: '100%', paddingTop: '16px' }}>
