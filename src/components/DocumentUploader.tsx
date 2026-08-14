@@ -6,6 +6,7 @@ import { autoExtractMetadata, parsePdfTableRows } from '../utils/extractor';
 
 interface DocumentUploaderProps {
   onUploadSuccess: () => void;
+  cryptoKey: CryptoKey | null;
 }
 
 const DOCUMENT_TYPES = [
@@ -16,7 +17,7 @@ const DOCUMENT_TYPES = [
   'Diğer'
 ];
 
-export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUploadSuccess }) => {
+export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUploadSuccess, cryptoKey }) => {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -202,7 +203,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onUploadSucc
         data: row
       }));
 
-      await saveDocumentAndRows(newDoc, docRows);
+      await saveDocumentAndRows(newDoc, docRows, cryptoKey);
       onUploadSuccess();
     } catch (err: any) {
       setError('Belge kaydedilirken bir hata oluştu: ' + err.message);

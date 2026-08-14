@@ -1,11 +1,12 @@
 import React from 'react';
-import { LayoutDashboard, UploadCloud, Table, Sun, Moon, FileSpreadsheet } from 'lucide-react';
+import { LayoutDashboard, UploadCloud, Table, Sun, Moon, FileSpreadsheet, Lock } from 'lucide-react';
 
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   darkMode: boolean;
   setDarkMode: (dark: boolean) => void;
+  onLock?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -13,6 +14,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   darkMode,
   setDarkMode,
+  onLock,
 }) => {
   const menuItems = [
     { id: 'dashboard', name: 'Gösterge Paneli', icon: LayoutDashboard },
@@ -86,7 +88,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       {/* Dark/Light Mode Switcher & Footer */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
         <button
           onClick={toggleDarkMode}
           className="btn btn-secondary"
@@ -95,6 +97,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           <span>{darkMode ? 'Açık Tema' : 'Koyu Tema'}</span>
         </button>
+
+        {onLock && (
+          <button
+            onClick={onLock}
+            className="btn btn-secondary"
+            style={{ width: '100%', borderRadius: '10px', padding: '12px', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}
+          >
+            <Lock size={18} />
+            <span>Sistemi Kilitle</span>
+          </button>
+        )}
 
         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'center', fontWeight: 500 }}>
           © 2026 Muhasebe A.Ş. <br /> v1.0.0

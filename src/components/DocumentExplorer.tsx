@@ -3,7 +3,11 @@ import * as XLSX from 'xlsx';
 import { Search, Trash2, Eye, Download, Calendar, FileText, ChevronLeft, ChevronRight, X, ExternalLink, Clipboard, Check, Sheet } from 'lucide-react';
 import { getDocuments, deleteDocument, getDocumentRows, type DocumentItem, type DocumentRow } from '../db';
 
-export const DocumentExplorer: React.FC = () => {
+interface DocumentExplorerProps {
+  cryptoKey: CryptoKey | null;
+}
+
+export const DocumentExplorer: React.FC<DocumentExplorerProps> = ({ cryptoKey }) => {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [filteredDocs, setFilteredDocs] = useState<DocumentItem[]>([]);
   
@@ -76,7 +80,7 @@ export const DocumentExplorer: React.FC = () => {
   const loadDocuments = async () => {
     setIsLoading(true);
     try {
-      const docs = await getDocuments();
+      const docs = await getDocuments(cryptoKey);
       setDocuments(docs);
     } catch (err) {
       console.error('Belgeler yüklenirken hata:', err);
@@ -87,7 +91,7 @@ export const DocumentExplorer: React.FC = () => {
 
   useEffect(() => {
     loadDocuments();
-  }, []);
+  }, [cryptoKey]);
 
   // Get categories list dynamically
   const categories = Array.from(new Set(documents.map(d => d.category))).filter(Boolean);
@@ -133,7 +137,7 @@ export const DocumentExplorer: React.FC = () => {
     const loadRows = async () => {
       if (previewDoc) {
         try {
-          const rows = await getDocumentRows(previewDoc.id);
+          const rows = await getDocumentRows(previewDoc.id, cryptoKey);
           setDocRows(rows);
           setFilteredDocRows(rows);
           setRowSearchTerm('');
@@ -157,7 +161,7 @@ export const DocumentExplorer: React.FC = () => {
       }
     };
     loadRows();
-  }, [previewDoc]);
+  }, [previewDoc, cryptoKey]);
 
   // Filter document rows inside "Tablo Verileri" tab
   useEffect(() => {
@@ -800,7 +804,7 @@ export const DocumentExplorer: React.FC = () => {
       let headers: string[] = [];
 
       for (const doc of documents) {
-        const rows = await getDocumentRows(doc.id);
+        const rows = await getDocumentRows(doc.id, cryptoKey);
         if (rows.length === 0) continue;
 
         // Determine spreadsheet headers on first document hit
@@ -863,7 +867,7 @@ export const DocumentExplorer: React.FC = () => {
       let headers: string[] = [];
 
       for (const doc of documents) {
-        const rows = await getDocumentRows(doc.id);
+        const rows = await getDocumentRows(doc.id, cryptoKey);
         if (rows.length === 0) continue;
 
         if (headers.length === 0) {

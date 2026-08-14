@@ -5,16 +5,17 @@ import { getDocuments, type DocumentItem } from '../db';
 
 interface DashboardProps {
   setActiveTab: (tab: string) => void;
+  cryptoKey: CryptoKey | null;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ setActiveTab }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ setActiveTab, cryptoKey }) => {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
       try {
-        const docs = await getDocuments();
+        const docs = await getDocuments(cryptoKey);
         setDocuments(docs);
       } catch (error) {
         console.error('Gösterge paneli verileri yüklenirken hata:', error);
@@ -23,7 +24,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setActiveTab }) => {
       }
     };
     loadData();
-  }, []);
+  }, [cryptoKey]);
 
   const totalDocuments = documents.length;
   const maasBordrosuCount = documents.filter(d => d.docType === 'Maaş Bordrosu').length;

@@ -1,3 +1,5 @@
+import { encryptPayload, decryptPayload, blobToBase64, base64ToBlob } from './utils/crypto';
+
 export interface DocumentItem {
   id: string;
   name: string;
@@ -46,9 +48,52 @@ export function initDB(): Promise<IDBDatabase> {
 
 export async function saveDocumentAndRows(
   doc: DocumentItem,
-  rows: DocumentRow[]
+  rows: DocumentRow[],
+  key: CryptoKey | null
 ): Promise<void> {
   const db = await initDB();
+
+  let encryptedDoc: any;
+  let encryptedRows: any[];
+
+  if (key) {
+    // Encrypt document details
+    const fileDataBase64 = await blobToBase64(doc.fileData);
+    const docPayload = {
+      name: doc.name,
+      fileName: doc.fileName,
+      fileSize: doc.fileSize,
+      fileType: doc.fileType,
+      docType: doc.docType,
+      date: doc.date,
+      category: doc.category,
+      description: doc.description,
+      fileDataBase64,
+      uploadedAt: doc.uploadedAt
+    };
+    const encryptedDocPayload = await encryptPayload(docPayload, key);
+    encryptedDoc = {
+      id: doc.id,
+      encryptedPayload: encryptedDocPayload,
+      uploadedAt: doc.uploadedAt
+    };
+
+    // Encrypt row data
+    encryptedRows = await Promise.all(rows.map(async (row) => {
+      const encryptedRowPayload = await encryptPayload(row.data, key);
+      return {
+        id: row.id,
+        docId: row.docId,
+        rowNumber: row.rowNumber,
+        encryptedPayload: encryptedRowPayload
+      };
+    }));
+  } else {
+    // Non-encrypted fallback
+    encryptedDoc = doc;
+    encryptedRows = rows;
+  }
+
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['documents', 'document_rows'], 'readwrite');
     
@@ -56,16 +101,16 @@ export async function saveDocumentAndRows(
     transaction.oncomplete = () => resolve();
 
     const docStore = transaction.objectStore('documents');
-    docStore.put(doc);
+    docStore.put(encryptedDoc);
 
     const rowStore = transaction.objectStore('document_rows');
-    for (const row of rows) {
-      rowStore.put(row);
+    for (const erow of encryptedRows) {
+      rowStore.put(erow);
     }
   });
 }
 
-export async function getDocuments(): Promise<DocumentItem[]> {
+export async function getDocuments(key: CryptoKey | null): Promise<DocumentItem[]> {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('documents', 'readonly');
@@ -73,11 +118,42 @@ export async function getDocuments(): Promise<DocumentItem[]> {
     const request = store.getAll();
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = async () => {
+      const results = request.result || [];
+      try {
+        const decryptedDocs = await Promise.all(results.map(async (edoc: any) => {
+          if (!edoc.encryptedPayload) {
+            // Returns legacy plaintext document if any exists
+            return edoc as DocumentItem;
+          }
+          if (!key) {
+            throw new Error("Veritabanı şifrelenmiş fakat anahtar verilmedi!");
+          }
+          const payload = await decryptPayload(edoc.encryptedPayload, key);
+          const fileData = base64ToBlob(payload.fileDataBase64, payload.fileType === 'PDF' ? 'application/pdf' : 'image/png');
+          return {
+            id: edoc.id,
+            name: payload.name,
+            fileName: payload.fileName,
+            fileSize: payload.fileSize,
+            fileType: payload.fileType,
+            docType: payload.docType,
+            date: payload.date,
+            category: payload.category,
+            description: payload.description,
+            fileData,
+            uploadedAt: payload.uploadedAt
+          };
+        }));
+        resolve(decryptedDocs);
+      } catch (err) {
+        reject(err);
+      }
+    };
   });
 }
 
-export async function getDocumentRows(docId: string): Promise<DocumentRow[]> {
+export async function getDocumentRows(docId: string, key: CryptoKey | null): Promise<DocumentRow[]> {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('document_rows', 'readonly');
@@ -86,7 +162,30 @@ export async function getDocumentRows(docId: string): Promise<DocumentRow[]> {
     const request = index.getAll(IDBKeyRange.only(docId));
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result || []);
+    request.onsuccess = async () => {
+      const results = request.result || [];
+      try {
+        const decryptedRows = await Promise.all(results.map(async (erow: any) => {
+          if (!erow.encryptedPayload) {
+            // Returns legacy plaintext row if any exists
+            return erow as DocumentRow;
+          }
+          if (!key) {
+            throw new Error("Veritabanı şifrelenmiş fakat anahtar verilmedi!");
+          }
+          const data = await decryptPayload(erow.encryptedPayload, key);
+          return {
+            id: erow.id,
+            docId: erow.docId,
+            rowNumber: erow.rowNumber,
+            data
+          };
+        }));
+        resolve(decryptedRows);
+      } catch (err) {
+        reject(err);
+      }
+    };
   });
 }
 
