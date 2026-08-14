@@ -1,4 +1,11 @@
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configure local worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.js',
+  import.meta.url
+).toString();
 
 export interface ExtractedMetadata {
   name: string;
@@ -23,32 +30,22 @@ function extractDate(text: string): string {
   for (const pattern of DATE_PATTERNS) {
     const match = text.match(pattern);
     if (match) {
-      let day = '';
-      let month = '';
-      let year = '';
-
-      if (pattern.source.startsWith('\\b(0?')) {
-        day = match[1].padStart(2, '0');
-        month = match[2].padStart(2, '0');
-        year = match[3];
+      const [_, d1, d2, d3] = match;
+      if (d1.length === 4) {
+        return `${d1}-${d2.padStart(2, '0')}-${d3.padStart(2, '0')}`;
       } else {
-        year = match[1];
-        month = match[2].padStart(2, '0');
-        day = match[3].padStart(2, '0');
+        return `${d3}-${d2.padStart(2, '0')}-${d1.padStart(2, '0')}`;
       }
-      return `${year}-${month}-${day}`;
     }
   }
 
   const lowerText = text.toLowerCase();
   for (const [monthName, monthNum] of Object.entries(TURKISH_MONTHS)) {
-    const monthIndex = lowerText.indexOf(monthName);
-    if (monthIndex !== -1) {
-      const textAfterMonth = lowerText.substring(monthIndex, monthIndex + 25);
-      const yearMatch = textAfterMonth.match(/\b(20\d{2})\b/);
-      if (yearMatch) {
-        return `${yearMatch[1]}-${monthNum}-01`;
-      }
+    const match = lowerText.match(new RegExp(`(\\d{1,2})?\\s*(${monthName})\\s*(20\\d{2})`, 'i'));
+    if (match) {
+      const day = match[1] ? match[1].padStart(2, '0') : '01';
+      const year = match[3];
+      return `${year}-${monthNum}-${day}`;
     }
   }
 
@@ -56,11 +53,15 @@ function extractDate(text: string): string {
 }
 
 function analyzeText(text: string, fileName: string): ExtractedMetadata {
-  const combinedText = `${fileName} ${text}`.toLowerCase();
-  
-  let docType = 'TOBB Belgesi';
-  let category = 'TOBB Evrak';
-  let name = '';
+  const lowerText = text.toLowerCase();
+  const lowerFileName = fileName.toLowerCase();
+  const combinedText = `${lowerFileName} ${lowerText}`;
+
+  const date = extractDate(combinedText);
+
+  let docType = 'Diğer';
+  let category = 'Genel';
+  let name = fileName.replace(/\.[^/.]+$/, '');
   let description = '';
 
   if (
@@ -69,69 +70,58 @@ function analyzeText(text: string, fileName: string): ExtractedMetadata {
     combinedText.includes('maas') || 
     combinedText.includes('kazanç') || 
     combinedText.includes('net ödenen') || 
-    combinedText.includes('sgk')
+    combinedText.includes('sgk') ||
+    combinedText.includes('bes')
   ) {
     docType = 'Maaş Bordrosu';
     category = 'Personel';
+    
+    let period = '';
+    for (const [monthName] of Object.entries(TURKISH_MONTHS)) {
+      if (combinedText.includes(monthName)) {
+        const yearMatch = combinedText.match(/20\d{2}/);
+        const year = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
+        period = `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${year}`;
+        break;
+      }
+    }
+    
+    if (period) {
+      name = `${period} Maaş Bordrosu`;
+      description = `Sistem tarafından otomatik çözümlenen ${period} dönemine ait personel maaş bordrosu belgesi.`;
+    } else {
+      name = `Maaş Bordrosu - ${date}`;
+      description = `Otomatik arşivlenen maaş bordrosu ve personel tahakkuk dökümü.`;
+    }
+  } else if (
+    combinedText.includes('tobb') || 
+    combinedText.includes('birlik') || 
+    combinedText.includes('oda') || 
+    combinedText.includes('genelge') ||
+    combinedText.includes('türkiye odalar ve borsalar birliği')
+  ) {
+    docType = 'TOBB Belgesi';
+    category = 'TOBB Yazışmaları';
+    description = `TOBB koordinasyonunda gelen resmi evrak ve mevzuat bilgilendirme yazısı.`;
   } else if (
     combinedText.includes('fatura') || 
-    combinedText.includes('invoice') || 
     combinedText.includes('kdv') || 
-    combinedText.includes('tutar') || 
-    combinedText.includes('fiş') || 
-    combinedText.includes('fis') || 
-    combinedText.includes('ödeme')
+    combinedText.includes('irsaliye') || 
+    combinedText.includes('vergi')
   ) {
     docType = 'Fatura';
     category = 'Finans';
+    description = `Muhasebeleştirilen fatura ve harcama evrakı.`;
   } else if (
     combinedText.includes('sözleşme') || 
     combinedText.includes('sozlesme') || 
-    combinedText.includes('anlaşma') || 
     combinedText.includes('protokol') || 
-    combinedText.includes('maddesi')
+    combinedText.includes('anlaşma')
   ) {
     docType = 'Sözleşme';
-    category = 'Hukuk';
-  } else if (
-    combinedText.includes('tobb') || 
-    combinedText.includes('odalar') || 
-    combinedText.includes('borsa') || 
-    combinedText.includes('sicil') || 
-    combinedText.includes('faaliyet belgesi')
-  ) {
-    docType = 'TOBB Belgesi';
-    category = 'TOBB Evrak';
+    category = 'Hukuk / Sözleşmeler';
+    description = `Kurumsal sözleşme ve protokol kaydı.`;
   } else {
-    docType = 'Diğer';
-    category = 'Genel';
-  }
-
-  const date = extractDate(combinedText);
-  const yearMonth = date.substring(0, 7);
-  const formattedDate = new Date(date).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
-
-  const cleanFileName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-  
-  if (docType === 'Maaş Bordrosu') {
-    name = `${formattedDate} Maaş Bordrosu`;
-    description = `Sistem tarafından otomatik çözümlenen ${formattedDate} dönemine ait personel maaş bordrosu belgesi.`;
-  } else if (docType === 'TOBB Belgesi') {
-    if (combinedText.includes('faaliyet')) {
-      name = `TOBB Faaliyet Belgesi (${yearMonth.split('-')[0]})`;
-      description = `TOBB Faaliyet Belgesi evrakı.`;
-    } else {
-      name = `TOBB Resmi Yazı - ${cleanFileName}`;
-      description = `TOBB'dan gelen resmi evrak / yazışma.`;
-    }
-  } else if (docType === 'Fatura') {
-    name = `Fatura - ${cleanFileName}`;
-    description = `Arşivlenen fatura belgesi.`;
-  } else if (docType === 'Sözleşme') {
-    name = `Sözleşme - ${cleanFileName}`;
-    description = `Taraflar arasında imzalanan sözleşme evrakı.`;
-  } else {
-    name = cleanFileName;
     description = `Arşivlenen genel nitelikli belge.`;
   }
 
@@ -144,25 +134,6 @@ function analyzeText(text: string, fileName: string): ExtractedMetadata {
   };
 }
 
-// Ensures PDFJS script is loaded inside DOM
-async function ensurePdfJsLoaded(): Promise<any> {
-  if ((window as any).pdfjsLib) {
-    return (window as any).pdfjsLib;
-  }
-  
-  return new Promise((resolve) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    document.head.appendChild(script);
-
-    script.onload = () => {
-      const pdfjsLib = (window as any).pdfjsLib;
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      resolve(pdfjsLib);
-    };
-  });
-}
-
 // Extracts plain text from PDF
 async function extractPdfText(file: File | Blob): Promise<string> {
   return new Promise((resolve) => {
@@ -170,8 +141,6 @@ async function extractPdfText(file: File | Blob): Promise<string> {
     reader.onload = async (e) => {
       try {
         const arrayBuffer = e.target?.result as ArrayBuffer;
-        const pdfjsLib = await ensurePdfJsLoaded();
-
         const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
         const pdf = await loadingTask.promise;
         
@@ -260,7 +229,6 @@ export function parsePdfTableRows(file: File | Blob): Promise<Record<string, any
     reader.onload = async (e) => {
       try {
         const arrayBuffer = e.target?.result as ArrayBuffer;
-        const pdfjsLib = await ensurePdfJsLoaded();
         const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
         const pdf = await loadingTask.promise;
 
